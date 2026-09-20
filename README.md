@@ -111,6 +111,8 @@ bun install
 bun run dev
 ```
 
+网页与 `canvas-agent/` 依赖已安装且本机 Codex CLI 已可用时，可在仓库根目录运行 `node dev.mjs`，同时启动网页和本地 Agent；按 `Ctrl+C` 一起停止。详见 [本地 Agent 启动说明](canvas-agent/README.md)。
+
 ### Docker 运行
 
 ```bash

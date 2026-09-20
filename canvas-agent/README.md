@@ -2,7 +2,35 @@
 
 本地 Canvas Agent 用来连接画布网页和用户电脑上的 Codex / Claude Code。本地开发时优先连接 `http://localhost:3000`，不需要先使用线上站点。
 
-## 启动
+## 本地复用已有 Codex CLI
+
+本地版本不再依赖或下载 `@openai/codex`，默认调用 PATH 中的 `codex`。
+在 `canvas-agent/` 目录安装桥接服务自身依赖后启动（无需 Codex 插件）：
+
+```bash
+npm install
+npm run dev
+```
+
+可用 `CANVAS_CODEX_PATH=/absolute/path/to/codex npm run dev` 指定已有 CLI。
+保持终端运行，在网页 Agent 面板填写输出的地址和 Token。CLI 需要已登录；
+版本须支持当前 app-server 协议。下面的 npx 命令运行 npm 发布版，不会使用本地修改。
+
+## 一条命令启动网页和本地 Agent
+
+网页与 Agent 依赖已经安装、本机 Codex CLI 已可用时，在仓库根目录执行：
+
+```bash
+node dev.mjs
+```
+
+脚本同时启动网页和 Agent，按 `Ctrl+C` 一起停止；任一服务退出时也会停止另一服务。
+它不安装依赖、不下载 Codex、不注册插件。需要指定 CLI 时使用
+`CANVAS_CODEX_PATH=/absolute/path/to/codex node dev.mjs`。
+先停止之前单独启动的服务，避免端口冲突；首次仍需在网页 Agent 面板连接。
+原来仅启动网页的 `web/` 下 `bun run dev` 保持可用。
+
+## 启动发布版
 
 ```bash
 npx -y @basketikun/canvas-agent@latest
@@ -134,7 +162,7 @@ default_tools_approval_mode = "approve"
 
 ## 侧边栏 Codex
 
-本地面板会把提示词发送给 Canvas Agent。Canvas Agent 使用官方 `@openai/codex` CLI 的 `codex app-server --stdio` 启动并复用同一个 Codex thread，启动时会注入 `infinite-canvas` MCP 配置并自动放行 MCP 审批，真正执行画布修改前仍由网页侧边栏二次确认。
+本地面板会把提示词发送给 Canvas Agent。Canvas Agent 使用本机已有的 Codex CLI 的 `codex app-server --stdio` 启动并复用同一个 Codex thread，启动时会注入 `infinite-canvas` MCP 配置并自动放行 MCP 审批，真正执行画布修改前仍由网页侧边栏二次确认。
 
 侧边栏会展示 Codex 返回的 `thread.started`、`turn.started`、`item.*`、`turn.completed` 等结构化事件；Canvas Agent 会合并短时间内的回复、思考摘要和命令输出增量，网页使用同一条消息持续更新，并把任务进度、计划、搜索、文件修改与工具操作整理为中文过程时间线。
 

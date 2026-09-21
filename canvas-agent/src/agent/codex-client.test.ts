@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { CodexAppClient } from "./codex-client.js";
+import { logger } from "../utils/logger.js";
 import { assertDraftHasNoSensitiveValues, canvasSkillSource } from "./codex.js";
 
 type TestClient = {
@@ -18,6 +19,88 @@ type TestClient = {
 };
 
 const emptyEventHistory = { record: () => Promise.resolve(), recordTurn: () => Promise.resolve() };
+
+test("恢复缺少 rollout 的会话仅记录 debug，错误仍交给调用方处理", async (t) => {
+    const warn = t.mock.method(logger, "warn", () => undefined);
+    const debug = t.mock.method(logger, "debug", () => undefined);
+    const { client, handler, writes } = await emptyThreadFixture();
+    const resuming = client.resumeThread("missing-thread");
+    handler.handle({ id: writes.at(-1)?.id, error: { message: "no rollout found for thread id missing-thread" } });
+    await assert.rejects(resuming, /no rollout found/);
+    assert.equal(warn.mock.callCount(), 0);
+    assert.ok(debug.mock.calls.some(({ arguments: args }) => String(args[0]).includes("caller will handle recovery")));
+
+    const reading = client.readThread("missing-thread");
+    handler.handle({ id: writes.at(-1)?.id, error: { message: "no rollout found for thread id missing-thread" } });
+    await assert.rejects(reading, /no rollout found/);
+    assert.equal(warn.mock.callCount(), 1);
+
+    const failed = client.resumeThread("existing-thread");
+    handler.handle({ id: writes.at(-1)?.id, error: { message: "permission denied" } });
+    await assert.rejects(failed, /permission denied/);
+    assert.equal(warn.mock.callCount(), 2);
+});
+
+async function emptyThreadFixture() {
+    const writes: Array<Record<string, unknown>> = [];
+    const child = { stdin: { write: (line: string) => (writes.push(JSON.parse(line)), true) } };
+    const client = Reflect.construct(CodexAppClient, [child, () => undefined, emptyEventHistory]) as CodexAppClient;
+    const handler = client as unknown as TestClient;
+    const starting = client.startThread("/site");
+    handler.handle({ id: writes.at(-1)?.id, result: { thread: { id: "empty-thread", turns: [] } } });
+    await starting;
+    return { client, handler, writes };
+}
+
+test("新建空会话只读摘要，首轮启动后恢复完整历史请求", async () => {
+    const { client, handler, writes } = await emptyThreadFixture();
+    const reading = client.readThread("empty-thread");
+    assert.deepEqual(writes.at(-1)?.params, { threadId: "empty-thread", includeTurns: false });
+    handler.handle({ id: writes.at(-1)?.id, result: { thread: { id: "empty-thread", turns: [] } } });
+    assert.deepEqual((await reading).thread.turns, []);
+
+    const running = client.startTurn("empty-thread", "hello", [], "request");
+    handler.handle({ id: writes.at(-1)?.id, result: { turn: { id: "turn-1" } } });
+    const history = client.readThread("empty-thread");
+    assert.deepEqual(writes.at(-1)?.params, { threadId: "empty-thread", includeTurns: true });
+    const turns = [{ id: "turn-1", status: "completed", items: [] }];
+    handler.handle({ id: writes.at(-1)?.id, result: { thread: { id: "empty-thread", turns } } });
+    assert.deepEqual((await history).thread.turns, turns);
+    handler.handleNotification("turn/completed", { threadId: "empty-thread", turn: turns[0] });
+    await running;
+});
+
+test("摘要读取期间收到首轮启动事件时重新读取完整历史", async () => {
+    const { client, handler, writes } = await emptyThreadFixture();
+    const reading = client.readThread("empty-thread");
+    const summaryRequest = writes.at(-1);
+    handler.handleNotification("turn/started", { threadId: "empty-thread", turn: { id: "turn-1" } });
+    handler.handle({ id: summaryRequest?.id, result: { thread: { id: "empty-thread", turns: [] } } });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(writes.at(-1)?.params, { threadId: "empty-thread", includeTurns: true });
+    const turns = [{ id: "turn-1", status: "inProgress", items: [] }];
+    handler.handle({ id: writes.at(-1)?.id, result: { thread: { id: "empty-thread", turns } } });
+    assert.deepEqual((await reading).thread.turns, turns);
+});
+
+test("未知旧会话读取失败时保留错误，不伪装成空历史", async () => {
+    const { client, handler, writes } = await emptyThreadFixture();
+    const reading = client.readThread("existing-thread");
+    assert.deepEqual(writes.at(-1)?.params, { threadId: "existing-thread", includeTurns: true });
+    handler.handle({ id: writes.at(-1)?.id, error: { message: "list_turns is not supported yet" } });
+    await assert.rejects(reading, /list_turns is not supported yet/);
+});
+
+test("恢复会话发现已有轮次后清除空会话标记", async () => {
+    const { client, handler, writes } = await emptyThreadFixture();
+    const resuming = client.resumeThread("empty-thread");
+    handler.handle({ id: writes.at(-1)?.id, result: { thread: { id: "empty-thread", turns: [{ id: "external-turn" }] } } });
+    await resuming;
+    const reading = client.readThread("empty-thread");
+    assert.deepEqual(writes.at(-1)?.params, { threadId: "empty-thread", includeTurns: true });
+    handler.handle({ id: writes.at(-1)?.id, result: { thread: { id: "empty-thread", turns: [{ id: "external-turn" }] } } });
+    assert.equal((await reading).thread.turns?.length, 1);
+});
 
 test("审批只在 app-server 确认 resolved 后清除", () => {
     const writes: Array<Record<string, unknown>> = [];

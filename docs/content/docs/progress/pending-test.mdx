@@ -7,6 +7,14 @@ description: Implemented changes that still need manual verification
 
 The current release needs manual verification in these areas:
 
+- Startup recovery logging: restart after creating an empty conversation. A missing rollout followed by successful automatic conversation creation should only appear in debug logs, and sending messages should still work. Manual restoration of a missing conversation, permission errors, and failed automatic creation must remain visible; existing history must not be deleted.
+
+- Launcher terminal closure: start with `node dev.mjs`, close that terminal window, and verify ports 3000 and 17371 are released and restarting succeeds. Ctrl+C, SIGTERM, and either service exiting should still stop both services launched by this invocation, without affecting separately started services.
+
+- Agent terminal output: `node dev.mjs` should show startup connection information, warnings, and concise errors without routine conversation/tool payloads or stack traces. Verify a real failure still shows its reason. `node dev.mjs --debug` should restore detailed Agent logs and file logging; web chat messages should remain unchanged.
+
+- Empty Codex conversations: after restarting Canvas Agent, create a new conversation and leave it empty; history loading should not produce repeated `list_turns is not supported yet` errors. Send the first message, then refresh or reconnect and verify that completed messages appear once. Existing conversations must still load full history and surface real read failures. The adapter's 42 unit tests pass; browser verification remains pending.
+
 - Duplicate Agent startup: an occupied port must fail without reporting success or starting Codex app-server; the existing instance and conversation history must remain intact.
 
 - Combined development launcher: run `node dev.mjs` from the repository root; verify both services start using the local Codex CLI, Ctrl+C stops both, and either service exiting stops the other. Missing dependencies or CLI must fail without downloading. Stop existing services before verification to avoid port conflicts.

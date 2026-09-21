@@ -13,13 +13,13 @@ export class Logger {
     readonly filePath = this.enabled ? path.join(os.homedir(), ".infinite-canvas", "logs", `canvas-agent-${formatDateForFilename()}.log`) : "";
     private readonly logger: WinstonLogger;
 
-    /** 普通模式输出 Info 以上日志，Debug 模式额外输出 Debug 并写入文件。 */
+    /** 普通模式只输出简短警告和错误，Debug 模式保留完整运行日志并写入文件。 */
     constructor() {
-        const line = format.printf(({level, message, timestamp, details}) => `${timestamp} ${level.toUpperCase()} ${message}${formatDetails(details)}`);
+        const line = format.printf(({level, message, timestamp, details}) => `${timestamp} ${level.toUpperCase()} ${message}${this.enabled ? formatDetails(details) : briefDetails(details)}`);
         const output = format.combine(format.timestamp({format: "YYYY-MM-DD HH:mm:ss"}), line);
         if (this.enabled) fs.mkdirSync(path.dirname(this.filePath), {recursive: true});
         this.logger = winston.createLogger({
-            level: this.enabled ? "debug" : "info",
+            level: this.enabled ? "debug" : "warn",
             transports: [
                 new transports.Console({format: output}),
                 ...(this.enabled ? [new transports.File({filename: this.filePath, format: output})] : []),
@@ -50,6 +50,14 @@ export class Logger {
         if (details === undefined) this.logger.error(message);
         else this.logger.error(message, {details: sanitize(details)});
     }
+}
+
+/** 普通模式只保留错误原因，不展开请求参数、对话内容和堆栈。 */
+function briefDetails(details: unknown): string {
+    if (typeof details === "string") return ` ${details.replace(/\s+/g, " ").trim()}`;
+    if (!details || typeof details !== "object") return "";
+    const value = details as Record<string, unknown>;
+    return briefDetails(value.error ?? value.message ?? value.text);
 }
 
 /** 将日志详情格式化为紧凑的单行文本。 */

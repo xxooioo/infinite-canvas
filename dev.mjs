@@ -39,10 +39,11 @@ function stop(code) {
 }
 process.on("SIGINT", () => stop(0));
 process.on("SIGTERM", () => stop(0));
+process.on("SIGHUP", () => stop(0));
 
 console.log("正在启动画布和本地 Agent；按 Ctrl+C 一起停止。本机 Codex：", codex);
 for (const service of services) {
-    const args = service.name === "Agent" ? ["--import", "tsx", "src/index.ts"] : [service.entry, ...service.args];
+    const args = service.name === "Agent" ? ["--import", "tsx", "src/index.ts", ...(process.argv.includes("--debug") ? ["--debug"] : [])] : [service.entry, ...service.args];
     const child = spawn(process.execPath, args, { cwd: `${root}${service.directory}`, stdio: "inherit", detached: processGroups });
     children.push(child);
     child.on("error", (error) => { console.error(`${service.name} 启动失败：${error.message}`); stop(1); });

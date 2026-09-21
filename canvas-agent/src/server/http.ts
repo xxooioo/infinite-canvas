@@ -98,6 +98,7 @@ export function startHttpServer() {
     };
     const failPreparedConversation = (error: unknown, threadId: string, clientId = "") => {
         const text = error instanceof Error ? error.message : String(error);
+        logger.warn("Codex 会话准备失败", { threadId, error: text });
         session.failConversationPreparation(text);
         emit("agent_bootstrap", { type: "codex.prepare_failed", threadId, sourceClientId: clientId || undefined, error: text });
     };
@@ -441,8 +442,7 @@ export function startHttpServer() {
         checkVersions();
         console.log(`Local URL: ${config.url}`);
         console.log(`Connect token: ${config.token}`);
-        console.log("Codex MCP is not installed by this command.");
-        console.log("Connect from the web Agent panel; no Codex plugin or global MCP registration is required.");
+        console.log("请在网页 Agent 面板连接；运行中仅显示警告和错误，详细日志请启用 --debug。");
         if (logger.enabled) console.log(`Debug log: ${logger.filePath}`);
         logger.info("Canvas Agent started", { url: config.url, workspace: ensureSiteWorkspace(config).workspacePath, debugLog: logger.filePath });
         const activeThreadId = initialWorkspace.activeThreadId || "";
@@ -452,7 +452,7 @@ export function startHttpServer() {
                 session.beginConversation();
                 setActiveThread("", { emptyThread: true, draftThread: true }, true);
                 await prepareDraftThread("", "request");
-            }).finally(() => session.endCodexMutation()).catch(() => undefined);
+            }).finally(() => session.endCodexMutation()).catch((error) => logger.error("Codex 启动会话恢复失败", error));
         }
     });
 }

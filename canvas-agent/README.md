@@ -24,7 +24,7 @@ npm run dev
 node dev.mjs
 ```
 
-脚本同时启动网页和 Agent，按 `Ctrl+C` 一起停止；任一服务退出时也会停止另一服务。
+脚本同时启动网页和 Agent，按 `Ctrl+C` 或关闭终端窗口（收到 `SIGHUP`）时一起停止；任一服务退出时也会停止另一服务。
 它不安装依赖、不下载 Codex、不注册插件。需要指定 CLI 时使用
 `CANVAS_CODEX_PATH=/absolute/path/to/codex node dev.mjs`。
 先停止之前单独启动的服务，避免端口冲突；首次仍需在网页 Agent 面板连接。
@@ -44,7 +44,9 @@ npx -y @basketikun/canvas-agent@latest
 npx -y @basketikun/canvas-agent@latest --debug
 ```
 
-Debug 日志会以 `[DEBUG][HH:mm:ss]` 等传统格式输出到终端，并按启动日期保存到 `~/.infinite-canvas/logs/canvas-agent-YYYY-MM-DD.log`。终端日志带级别颜色，文件日志为纯文本；日志包含 HTTP、SSE、线程、turn、Codex app-server 和工具调用事件，token 与图片 Data URL 会自动隐藏。
+普通模式只显示启动连接信息、警告和简短错误，不输出日常对话过程、工具参数或错误堆栈。需要排查时，可在仓库根目录运行 `node dev.mjs --debug`，或在 `canvas-agent/` 运行 `npm run debug`。
+
+Debug 模式输出完整运行日志和错误堆栈，并保存到 `~/.infinite-canvas/logs/canvas-agent-YYYY-MM-DD.log`。日志包含 HTTP、SSE、线程、turn、Codex app-server 和工具调用事件，token 与图片 Data URL 会自动隐藏。
 
 本仓库开发时也可以直接运行：
 

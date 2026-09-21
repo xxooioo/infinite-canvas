@@ -11,7 +11,7 @@ import type { CodexNotificationParams, CodexPlanUpdate, CodexReasoningEffort, Co
 import type { AgentEmit, AgentPermissionMode } from "./types.js";
 
 type AgentEvent = JsonRecord & { type: string; usage?: unknown };
-type PendingRequest = { resolve: (value: unknown) => void; reject: (error: Error) => void; silent?: boolean };
+type PendingRequest = { resolve: (value: unknown) => void; reject: (error: Error) => void; silent?: boolean; method?: CodexRequestMethod };
 type ActiveTurn = PendingRequest & { threadId: string; turnId: string; prompt: string; messageText?: string };
 type ItemDeltaParams = { threadId: string; turnId: string; itemId: string; delta: string; summaryIndex?: number };
 type PendingDelta = { delta: string; itemType: string; params: ItemDeltaParams; timer: ReturnType<typeof setTimeout> };
@@ -57,6 +57,7 @@ export class CodexAppClient {
     private pendingThreadStartedNotifications: JsonRecord[] = [];
     private pendingPreheatThreadStarts = 0;
     private preheatingThreadIds = new Set<string>();
+    private emptyThreadIds = new Set<string>();
     private failing = false;
     private failureMessage = "";
 
@@ -110,6 +111,7 @@ export class CodexAppClient {
             const { thread } = await this.request("thread/start", { ...threadSettings(permissionMode), ...(cwd ? { cwd } : {}), threadSource: "user" });
             if (!thread.id) throw new Error("Codex app-server 没有返回 thread id");
             threadId = thread.id;
+            this.emptyThreadIds.add(threadId);
             if (preheat) {
                 this.preheatingThreadIds.add(threadId);
                 await this.completeMcpPreheat(threadId);
@@ -138,6 +140,7 @@ export class CodexAppClient {
             if (preheat) this.preheatingThreadIds.add(threadId);
             const { thread } = await this.request("thread/resume", { threadId, ...threadSettings(permissionMode), ...(cwd ? { cwd } : {}) });
             if (!thread.id) throw new Error("Codex app-server 没有返回 thread id");
+            if (!Array.isArray(thread.turns) || thread.turns.length) this.emptyThreadIds.delete(threadId);
             if (preheat) await this.completeMcpPreheat(thread.id);
             return thread;
         } finally {
@@ -158,12 +161,20 @@ export class CodexAppClient {
     }
 
     /** 读取指定 Codex 线程。 */
-    readThread(threadId: string, includeTurns = true) {
+    async readThread(threadId: string, includeTurns = true) {
+        // 本机 Codex 对尚未开始首轮的新会话读取 turns 会报 list_turns 不支持。
+        // 只跳过本进程亲自创建且尚未启动 turn 的会话，未知历史仍正常读取。
+        if (includeTurns && this.emptyThreadIds.has(threadId)) {
+            const result = await this.request("thread/read", { threadId, includeTurns: false });
+            if (this.emptyThreadIds.has(threadId)) return result;
+            // 读取摘要期间首轮可能已经启动，不能再把摘要当作完整历史。
+        }
         return this.request("thread/read", { threadId, includeTurns });
     }
 
     /** 归档指定 Codex 线程。 */
     archiveThread(threadId: string) {
+        this.emptyThreadIds.delete(threadId);
         return this.request("thread/archive", { threadId });
     }
 
@@ -217,6 +228,7 @@ export class CodexAppClient {
 
     /** 启动一个 Codex turn 并等待完成通知。 */
     async startTurn(threadId: string, prompt: string, images: string[], permissionMode: AgentPermissionMode, model?: string, effort?: CodexReasoningEffort, onTurn?: (turnId: string) => void, skill?: CodexSkillSelector, messageText?: string, outputSchema?: JsonRecord) {
+        this.emptyThreadIds.delete(threadId);
         this.preheatingThreadIds.delete(threadId);
         this.currentThreadId = threadId;
         this.currentTurnId = "";
@@ -311,7 +323,7 @@ export class CodexAppClient {
         if (this.failing) return Promise.reject(new CodexReportedError(this.failureMessage || "Codex app-server 已停止")) as Promise<CodexRequestResult<Method>>;
         const id = this.nextId++;
         this.write({ id, method, params }, silent);
-        return new Promise<CodexRequestResult<Method>>((resolve, reject) => this.pending.set(id, { resolve: (result) => resolve(result as CodexRequestResult<Method>), reject, silent }));
+        return new Promise<CodexRequestResult<Method>>((resolve, reject) => this.pending.set(id, { resolve: (result) => resolve(result as CodexRequestResult<Method>), reject, silent, method }));
     }
 
     /** 发送无需响应的 JSON-RPC 通知。 */
@@ -351,6 +363,7 @@ export class CodexAppClient {
             const error = String(field(message.error, "message") || "Codex request failed");
             if (!this.pending.get(id)?.silent) {
                 if (/not materialized yet.*includeTurns/i.test(error)) logger.debug("Codex thread has no messages yet", { id });
+                else if (this.pending.get(id)?.method === "thread/resume" && /no rollout found/i.test(error)) logger.debug("Codex thread cannot be resumed; caller will handle recovery", { id, error });
                 else logger.warn("Codex request failed", { id, error });
             }
             return this.reject(id, error);
@@ -362,6 +375,7 @@ export class CodexAppClient {
 
     /** 转换并广播 app-server 通知。 */
     private handleNotification(method: string, params: JsonRecord) {
+        if (method === "turn/started") this.emptyThreadIds.delete(String(field(params, "threadId") || ""));
         if (this.handleSilentNotification(method, params)) return;
         if (method === "skills/changed") {
             this.emit("skills_changed", {});
